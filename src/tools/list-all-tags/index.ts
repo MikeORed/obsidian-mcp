@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { McpError, ErrorCode } from "@modelcontextprotocol/sdk/types.js";
-import { validateVaultPath } from "../../utils/path.js";
 import { createTool } from "../../utils/tool-factory.js";
 import {
   processFilesForTags,
@@ -8,6 +7,11 @@ import {
   buildTagHierarchy,
   formatTagHierarchy,
 } from "../../utils/tag-search.js";
+import {
+  PaginationMetadata,
+  createPaginatedResponse,
+  formatPaginationNavigation,
+} from "../../utils/pagination.js";
 
 // Input validation schema with descriptions
 const schema = z
@@ -44,6 +48,22 @@ const schema = z
       .describe(
         "Maximum number of tags to return (default: 100, use 0 for all)"
       ),
+    // Pagination parameters
+    page: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .default(1)
+      .describe("Page number to return (starting from 1)"),
+    pageSize: z
+      .number()
+      .int()
+      .min(1)
+      .max(50)
+      .optional()
+      .default(20)
+      .describe("Number of tags per page (max: 50)"),
   })
   .strict();
 
@@ -59,6 +79,7 @@ interface TagListResult {
     files?: string[];
   }>;
   hierarchicalView?: string;
+  pagination?: PaginationMetadata;
 }
 
 async function listAllTags(
@@ -88,9 +109,21 @@ async function listAllTags(
     // Sort by count (descending)
     tagArray.sort((a, b) => b.count - a.count);
 
-    // Apply limit if specified
-    const limitedTags =
+    // Apply limit if specified (limit takes precedence over pagination)
+    let filteredTags =
       options.limit > 0 ? tagArray.slice(0, options.limit) : tagArray;
+
+    // Apply pagination if not using limit or if limit is larger than a page
+    let pagination: PaginationMetadata | undefined;
+    if (options.limit === 0 || options.limit > options.pageSize) {
+      const paginatedResponse = createPaginatedResponse(
+        filteredTags,
+        options.page,
+        options.pageSize
+      );
+      filteredTags = paginatedResponse.items;
+      pagination = paginatedResponse.pagination;
+    }
 
     // Build hierarchical view if requested
     let hierarchicalView: string | undefined;
@@ -105,8 +138,9 @@ async function listAllTags(
         options.path ? ` (path: ${options.path})` : ""
       }`,
       totalTags: tagArray.length,
-      tags: limitedTags,
+      tags: filteredTags,
       hierarchicalView,
+      pagination,
     };
   } catch (error) {
     if (error instanceof McpError) {
@@ -132,7 +166,8 @@ Examples:
 - With subfolder: { "vault": "my-vault", "path": "projects/active" }
 - With hierarchy: { "vault": "my-vault", "includeHierarchy": true }
 - With file locations: { "vault": "my-vault", "includeLocations": true }
-- Limited results: { "vault": "my-vault", "limit": 10 }`,
+- Limited results: { "vault": "my-vault", "limit": 10 }
+- Pagination: { "vault": "my-vault", "page": 2, "pageSize": 20 }`,
       schema,
       handler: async (args, vaultPath, _vaultName) => {
         const result = await listAllTags(vaultPath, args);
@@ -172,6 +207,11 @@ Examples:
           if (result.hierarchicalView) {
             message += "\nHierarchical structure:\n";
             message += result.hierarchicalView;
+          }
+
+          // Add pagination information if available
+          if (result.pagination) {
+            message += "\n\n" + formatPaginationNavigation(result.pagination);
           }
         }
 

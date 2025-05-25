@@ -8,12 +8,13 @@ import {
   matchesTagCriteria,
   getMatchingTags,
   TagMatchOptions,
-  TagOccurrence,
 } from "../../utils/tag-search.js";
+import { createToolResponse } from "../../utils/responses.js";
 import {
-  createToolResponse,
-  formatSearchResult,
-} from "../../utils/responses.js";
+  PaginationMetadata,
+  createPaginatedResponse,
+  formatPaginationNavigation,
+} from "../../utils/pagination.js";
 import { promises as fs } from "fs";
 import path from "path";
 
@@ -68,6 +69,22 @@ const schema = z
       .describe(
         "Whether to include context around matched tags (default: true)"
       ),
+    // Pagination parameters
+    page: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .default(1)
+      .describe("Page number to return (starting from 1)"),
+    pageSize: z
+      .number()
+      .int()
+      .min(1)
+      .max(50)
+      .optional()
+      .default(10)
+      .describe("Number of results per page (max: 50)"),
   })
   .strict();
 
@@ -84,6 +101,7 @@ interface TagSearchResult extends SearchResult {
 
 interface TagSearchOperationResult extends SearchOperationResult {
   results: TagSearchResult[];
+  pagination?: PaginationMetadata;
 }
 
 async function searchByTags(
@@ -108,7 +126,7 @@ async function searchByTags(
       caseSensitive: options.caseSensitive,
     };
 
-    const results: TagSearchResult[] = [];
+    const allResults: TagSearchResult[] = [];
     let totalMatches = 0;
 
     // Check each file for matching tags
@@ -149,7 +167,7 @@ async function searchByTags(
           }
         }
 
-        results.push({
+        allResults.push({
           file: filePath,
           content,
           matches: searchMatches,
@@ -160,16 +178,24 @@ async function searchByTags(
       }
     }
 
+    // Apply pagination
+    const { items: paginatedResults, pagination } = createPaginatedResponse(
+      allResults,
+      options.page,
+      options.pageSize
+    );
+
     return {
       success: true,
       message: `Found ${
-        results.length
+        allResults.length
       } notes matching tags: [${options.tags.join(", ")}] (${
         options.operator
       } operator)`,
-      results,
+      results: paginatedResults,
       totalMatches,
-      matchedFiles: results.length,
+      matchedFiles: allResults.length,
+      pagination,
     };
   } catch (error) {
     if (error instanceof McpError) {
@@ -196,7 +222,8 @@ Examples:
 - Multiple tags (OR): { "vault": "my-vault", "tags": ["Character", "Deity"], "operator": "OR" }
 - With hierarchy: { "vault": "my-vault", "tags": ["status"], "includeHierarchy": true }
 - Specific location: { "vault": "my-vault", "tags": ["project"], "location": "frontmatter" }
-- With content: { "vault": "my-vault", "tags": ["Character"], "includeContent": true }`,
+- With content: { "vault": "my-vault", "tags": ["Character"], "includeContent": true }
+- Pagination: { "vault": "my-vault", "tags": ["Character"], "page": 2, "pageSize": 10 }`,
       schema,
       handler: async (args, vaultPath, _vaultName) => {
         const result = await searchByTags(vaultPath, args);
@@ -250,6 +277,11 @@ Examples:
             // Add separator between files
             message += "\n";
           });
+
+          // Add pagination information if available
+          if (result.pagination) {
+            message += "\n" + formatPaginationNavigation(result.pagination);
+          }
         }
 
         return createToolResponse(message.trim());
