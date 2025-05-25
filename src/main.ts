@@ -11,18 +11,20 @@ import { createAddTagsTool } from "./tools/add-tags/index.js";
 import { createRemoveTagsTool } from "./tools/remove-tags/index.js";
 import { createRenameTagTool } from "./tools/rename-tag/index.js";
 import { createReadNoteTool } from "./tools/read-note/index.js";
+import { createListAllTagsTool } from "./tools/list-all-tags/index.js";
+import { createSearchByTagsTool } from "./tools/search-by-tags/index.js";
 import { listVaultsPrompt } from "./prompts/list-vaults/index.js";
 import { registerPrompt } from "./utils/prompt-factory.js";
 import path from "path";
 import os from "os";
 import { promises as fs, constants as fsConstants } from "fs";
 import { McpError, ErrorCode } from "@modelcontextprotocol/sdk/types.js";
-import { 
-  checkPathCharacters, 
-  checkLocalPath, 
+import {
+  checkPathCharacters,
+  checkLocalPath,
   checkSuspiciousPath,
   sanitizeVaultName,
-  checkPathOverlap 
+  checkPathOverlap,
 } from "./utils/path.js";
 
 interface VaultConfig {
@@ -99,267 +101,315 @@ Examples:
     console.error(helpMessage);
 
     // Write MCP error to stdout
-    process.stdout.write(JSON.stringify({
-      jsonrpc: "2.0",
-      error: {
-        code: ErrorCode.InvalidRequest,
-        message: "No vault paths provided. Please provide at least one valid Obsidian vault path."
-      },
-      id: null
-    }));
+    process.stdout.write(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        error: {
+          code: ErrorCode.InvalidRequest,
+          message:
+            "No vault paths provided. Please provide at least one valid Obsidian vault path.",
+        },
+        id: null,
+      })
+    );
 
     process.exit(1);
   }
 
   // Validate and normalize vault paths
-  const normalizedPaths = await Promise.all(vaultArgs.map(async (vaultPath, index) => {
-    try {
-      // Expand home directory if needed
-      const expandedPath = vaultPath.startsWith('~') ? 
-        path.join(os.homedir(), vaultPath.slice(1)) : 
-        vaultPath;
-      
-      // Normalize and convert to absolute path
-      const normalizedPath = path.normalize(expandedPath)
-        .replace(/[\/\\]+$/, ''); // Remove trailing slashes
-      const absolutePath = path.resolve(normalizedPath);
-
-      // Validate path is absolute and safe
-      if (!path.isAbsolute(absolutePath)) {
-        const errorMessage = `Vault path must be absolute: ${vaultPath}`;
-        console.error(`Error: ${errorMessage}`);
-        
-        process.stdout.write(JSON.stringify({
-          jsonrpc: "2.0",
-          error: {
-            code: ErrorCode.InvalidRequest,
-            message: errorMessage
-          },
-          id: null
-        }));
-        
-        process.exit(1);
-      }
-
-      // Check for suspicious paths and local filesystem
-      const [suspiciousReason, localPathIssue] = await Promise.all([
-        checkSuspiciousPath(absolutePath),
-        checkLocalPath(absolutePath)
-      ]);
-
-      if (localPathIssue) {
-        const errorMessage = `Invalid vault path (${localPathIssue}): ${vaultPath}\n` +
-          `For reliability and security reasons, vault paths must:\n` +
-          `- Be on a local filesystem\n` +
-          `- Not use network drives or mounts\n` +
-          `- Not contain symlinks that point outside their directory`;
-        
-        console.error(`Error: ${errorMessage}`);
-        
-        process.stdout.write(JSON.stringify({
-          jsonrpc: "2.0",
-          error: {
-            code: ErrorCode.InvalidRequest,
-            message: errorMessage
-          },
-          id: null
-        }));
-        
-        process.exit(1);
-      }
-
-      if (suspiciousReason) {
-        const errorMessage = `Invalid vault path (${suspiciousReason}): ${vaultPath}\n` +
-          `For security reasons, vault paths cannot:\n` +
-          `- Point to system directories\n` +
-          `- Use hidden directories (except .obsidian)\n` +
-          `- Point to the home directory root\n` +
-          `Please choose a dedicated directory for your vault`;
-        
-        console.error(`Error: ${errorMessage}`);
-        
-        process.stdout.write(JSON.stringify({
-          jsonrpc: "2.0",
-          error: {
-            code: ErrorCode.InvalidRequest,
-            message: errorMessage
-          },
-          id: null
-        }));
-        
-        process.exit(1);
-      }
-
+  const normalizedPaths = await Promise.all(
+    vaultArgs.map(async (vaultPath, index) => {
       try {
-        // Check if path exists and is a directory
-        const stats = await fs.stat(absolutePath);
-        if (!stats.isDirectory()) {
-          const errorMessage = `Vault path must be a directory: ${vaultPath}`;
+        // Expand home directory if needed
+        const expandedPath = vaultPath.startsWith("~")
+          ? path.join(os.homedir(), vaultPath.slice(1))
+          : vaultPath;
+
+        // Normalize and convert to absolute path
+        const normalizedPath = path
+          .normalize(expandedPath)
+          .replace(/[\/\\]+$/, ""); // Remove trailing slashes
+        const absolutePath = path.resolve(normalizedPath);
+
+        // Validate path is absolute and safe
+        if (!path.isAbsolute(absolutePath)) {
+          const errorMessage = `Vault path must be absolute: ${vaultPath}`;
           console.error(`Error: ${errorMessage}`);
-          
-          process.stdout.write(JSON.stringify({
-            jsonrpc: "2.0",
-            error: {
-              code: ErrorCode.InvalidRequest,
-              message: errorMessage
-            },
-            id: null
-          }));
-          
-          process.exit(1);
-        }
 
-        // Check if path is readable and writable
-        await fs.access(absolutePath, fsConstants.R_OK | fsConstants.W_OK);
-
-        // Check if this is a valid Obsidian vault
-        const obsidianConfigPath = path.join(absolutePath, '.obsidian');
-        const obsidianAppConfigPath = path.join(obsidianConfigPath, 'app.json');
-        
-        try {
-          // Check .obsidian directory
-          const configStats = await fs.stat(obsidianConfigPath);
-          if (!configStats.isDirectory()) {
-            const errorMessage = `Invalid Obsidian vault configuration in ${vaultPath}\n` +
-              `The .obsidian folder exists but is not a directory\n` +
-              `Try removing it and reopening the vault in Obsidian`;
-            
-            console.error(`Error: ${errorMessage}`);
-            
-            process.stdout.write(JSON.stringify({
+          process.stdout.write(
+            JSON.stringify({
               jsonrpc: "2.0",
               error: {
                 code: ErrorCode.InvalidRequest,
-                message: errorMessage
+                message: errorMessage,
               },
-              id: null
-            }));
-            
+              id: null,
+            })
+          );
+
+          process.exit(1);
+        }
+
+        // Check for suspicious paths and local filesystem
+        const [suspiciousReason, localPathIssue] = await Promise.all([
+          checkSuspiciousPath(absolutePath),
+          checkLocalPath(absolutePath),
+        ]);
+
+        if (localPathIssue) {
+          const errorMessage =
+            `Invalid vault path (${localPathIssue}): ${vaultPath}\n` +
+            `For reliability and security reasons, vault paths must:\n` +
+            `- Be on a local filesystem\n` +
+            `- Not use network drives or mounts\n` +
+            `- Not contain symlinks that point outside their directory`;
+
+          console.error(`Error: ${errorMessage}`);
+
+          process.stdout.write(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              error: {
+                code: ErrorCode.InvalidRequest,
+                message: errorMessage,
+              },
+              id: null,
+            })
+          );
+
+          process.exit(1);
+        }
+
+        if (suspiciousReason) {
+          const errorMessage =
+            `Invalid vault path (${suspiciousReason}): ${vaultPath}\n` +
+            `For security reasons, vault paths cannot:\n` +
+            `- Point to system directories\n` +
+            `- Use hidden directories (except .obsidian)\n` +
+            `- Point to the home directory root\n` +
+            `Please choose a dedicated directory for your vault`;
+
+          console.error(`Error: ${errorMessage}`);
+
+          process.stdout.write(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              error: {
+                code: ErrorCode.InvalidRequest,
+                message: errorMessage,
+              },
+              id: null,
+            })
+          );
+
+          process.exit(1);
+        }
+
+        try {
+          // Check if path exists and is a directory
+          const stats = await fs.stat(absolutePath);
+          if (!stats.isDirectory()) {
+            const errorMessage = `Vault path must be a directory: ${vaultPath}`;
+            console.error(`Error: ${errorMessage}`);
+
+            process.stdout.write(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                error: {
+                  code: ErrorCode.InvalidRequest,
+                  message: errorMessage,
+                },
+                id: null,
+              })
+            );
+
             process.exit(1);
           }
 
-          // Check app.json to verify it's properly initialized
-          await fs.access(obsidianAppConfigPath, fsConstants.R_OK);
-          
+          // Check if path is readable and writable
+          await fs.access(absolutePath, fsConstants.R_OK | fsConstants.W_OK);
+
+          // Check if this is a valid Obsidian vault
+          const obsidianConfigPath = path.join(absolutePath, ".obsidian");
+          const obsidianAppConfigPath = path.join(
+            obsidianConfigPath,
+            "app.json"
+          );
+
+          try {
+            // Check .obsidian directory
+            const configStats = await fs.stat(obsidianConfigPath);
+            if (!configStats.isDirectory()) {
+              const errorMessage =
+                `Invalid Obsidian vault configuration in ${vaultPath}\n` +
+                `The .obsidian folder exists but is not a directory\n` +
+                `Try removing it and reopening the vault in Obsidian`;
+
+              console.error(`Error: ${errorMessage}`);
+
+              process.stdout.write(
+                JSON.stringify({
+                  jsonrpc: "2.0",
+                  error: {
+                    code: ErrorCode.InvalidRequest,
+                    message: errorMessage,
+                  },
+                  id: null,
+                })
+              );
+
+              process.exit(1);
+            }
+
+            // Check app.json to verify it's properly initialized
+            await fs.access(obsidianAppConfigPath, fsConstants.R_OK);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+              const errorMessage =
+                `Not a valid Obsidian vault (${vaultPath})\n` +
+                `Missing or incomplete .obsidian configuration\n\n` +
+                `To fix this:\n` +
+                `1. Open Obsidian\n` +
+                `2. Click "Open folder as vault"\n` +
+                `3. Select the directory: ${absolutePath}\n` +
+                `4. Wait for Obsidian to initialize the vault\n` +
+                `5. Try running this command again`;
+
+              console.error(`Error: ${errorMessage}`);
+
+              process.stdout.write(
+                JSON.stringify({
+                  jsonrpc: "2.0",
+                  error: {
+                    code: ErrorCode.InvalidRequest,
+                    message: errorMessage,
+                  },
+                  id: null,
+                })
+              );
+            } else {
+              const errorMessage = `Error checking Obsidian configuration in ${vaultPath}: ${
+                error instanceof Error ? error.message : String(error)
+              }`;
+              console.error(`Error: ${errorMessage}`);
+
+              process.stdout.write(
+                JSON.stringify({
+                  jsonrpc: "2.0",
+                  error: {
+                    code: ErrorCode.InternalError,
+                    message: errorMessage,
+                  },
+                  id: null,
+                })
+              );
+            }
+            process.exit(1);
+          }
+
+          return absolutePath;
         } catch (error) {
-          if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-            const errorMessage = `Not a valid Obsidian vault (${vaultPath})\n` +
-              `Missing or incomplete .obsidian configuration\n\n` +
-              `To fix this:\n` +
-              `1. Open Obsidian\n` +
-              `2. Click "Open folder as vault"\n` +
-              `3. Select the directory: ${absolutePath}\n` +
-              `4. Wait for Obsidian to initialize the vault\n` +
-              `5. Try running this command again`;
-            
-            console.error(`Error: ${errorMessage}`);
-            
-            process.stdout.write(JSON.stringify({
+          let errorMessage: string;
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+            errorMessage = `Vault directory does not exist: ${vaultPath}`;
+          } else if ((error as NodeJS.ErrnoException).code === "EACCES") {
+            errorMessage = `No permission to access vault directory: ${vaultPath}`;
+          } else {
+            errorMessage = `Error accessing vault path ${vaultPath}: ${
+              error instanceof Error ? error.message : String(error)
+            }`;
+          }
+
+          console.error(`Error: ${errorMessage}`);
+
+          process.stdout.write(
+            JSON.stringify({
               jsonrpc: "2.0",
               error: {
                 code: ErrorCode.InvalidRequest,
-                message: errorMessage
+                message: errorMessage,
               },
-              id: null
-            }));
-          } else {
-            const errorMessage = `Error checking Obsidian configuration in ${vaultPath}: ${error instanceof Error ? error.message : String(error)}`;
-            console.error(`Error: ${errorMessage}`);
-            
-            process.stdout.write(JSON.stringify({
-              jsonrpc: "2.0",
-              error: {
-                code: ErrorCode.InternalError,
-                message: errorMessage
-              },
-              id: null
-            }));
-          }
+              id: null,
+            })
+          );
+
           process.exit(1);
         }
-
-        return absolutePath;
       } catch (error) {
-        let errorMessage: string;
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-          errorMessage = `Vault directory does not exist: ${vaultPath}`;
-        } else if ((error as NodeJS.ErrnoException).code === 'EACCES') {
-          errorMessage = `No permission to access vault directory: ${vaultPath}`;
-        } else {
-          errorMessage = `Error accessing vault path ${vaultPath}: ${error instanceof Error ? error.message : String(error)}`;
-        }
-        
+        const errorMessage = `Error processing vault path ${vaultPath}: ${
+          error instanceof Error ? error.message : String(error)
+        }`;
         console.error(`Error: ${errorMessage}`);
-        
-        process.stdout.write(JSON.stringify({
-          jsonrpc: "2.0",
-          error: {
-            code: ErrorCode.InvalidRequest,
-            message: errorMessage
-          },
-          id: null
-        }));
-        
+
+        process.stdout.write(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            error: {
+              code: ErrorCode.InternalError,
+              message: errorMessage,
+            },
+            id: null,
+          })
+        );
+
         process.exit(1);
       }
-    } catch (error) {
-      const errorMessage = `Error processing vault path ${vaultPath}: ${error instanceof Error ? error.message : String(error)}`;
-      console.error(`Error: ${errorMessage}`);
-      
-      process.stdout.write(JSON.stringify({
-        jsonrpc: "2.0",
-        error: {
-          code: ErrorCode.InternalError,
-          message: errorMessage
-        },
-        id: null
-      }));
-      
-      process.exit(1);
-    }
-  }));
+    })
+  );
 
   // Validate number of vaults
   if (vaultArgs.length > MAX_VAULTS) {
-    const errorMessage = `Too many vaults specified (${vaultArgs.length})\n` +
+    const errorMessage =
+      `Too many vaults specified (${vaultArgs.length})\n` +
       `Maximum number of vaults allowed: ${MAX_VAULTS}\n` +
       `This limit helps prevent performance issues and resource exhaustion`;
-    
+
     console.error(`Error: ${errorMessage}`);
-    
-    process.stdout.write(JSON.stringify({
-      jsonrpc: "2.0",
-      error: {
-        code: ErrorCode.InvalidRequest,
-        message: errorMessage
-      },
-      id: null
-    }));
-    
+
+    process.stdout.write(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        error: {
+          code: ErrorCode.InvalidRequest,
+          message: errorMessage,
+        },
+        id: null,
+      })
+    );
+
     process.exit(1);
   }
 
-  console.error(`Validating ${vaultArgs.length} vault path${vaultArgs.length > 1 ? 's' : ''}...`);
+  console.error(
+    `Validating ${vaultArgs.length} vault path${
+      vaultArgs.length > 1 ? "s" : ""
+    }...`
+  );
 
   // Check if we have any valid paths
   if (normalizedPaths.length === 0) {
-    const errorMessage = `No valid vault paths provided\n` +
+    const errorMessage =
+      `No valid vault paths provided\n` +
       `Make sure at least one path points to a valid Obsidian vault`;
-    
+
     console.error(`\nError: ${errorMessage}`);
-    
-    process.stdout.write(JSON.stringify({
-      jsonrpc: "2.0",
-      error: {
-        code: ErrorCode.InvalidRequest,
-        message: errorMessage
-      },
-      id: null
-    }));
-    
+
+    process.stdout.write(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        error: {
+          code: ErrorCode.InvalidRequest,
+          message: errorMessage,
+        },
+        id: null,
+      })
+    );
+
     process.exit(1);
   } else if (normalizedPaths.length < vaultArgs.length) {
-    console.error(`\nWarning: Only ${normalizedPaths.length} out of ${vaultArgs.length} paths were valid`);
+    console.error(
+      `\nWarning: Only ${normalizedPaths.length} out of ${vaultArgs.length} paths were valid`
+    );
     console.error("Some vaults will not be available");
   }
 
@@ -367,34 +417,37 @@ Examples:
     // Check for overlapping vault paths
     checkPathOverlap(normalizedPaths);
   } catch (error) {
-    const errorMessage = error instanceof McpError ? error.message : String(error);
+    const errorMessage =
+      error instanceof McpError ? error.message : String(error);
     console.error(`Error: ${errorMessage}`);
-    
-    process.stdout.write(JSON.stringify({
-      jsonrpc: "2.0",
-      error: {
-        code: ErrorCode.InvalidRequest,
-        message: errorMessage
-      },
-      id: null
-    }));
-    
+
+    process.stdout.write(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        error: {
+          code: ErrorCode.InvalidRequest,
+          message: errorMessage,
+        },
+        id: null,
+      })
+    );
+
     process.exit(1);
   }
 
   // Create vault configurations with human-friendly names
   console.error("\nInitializing vaults...");
-  const vaults: VaultConfig[] = normalizedPaths.map(vaultPath => {
+  const vaults: VaultConfig[] = normalizedPaths.map((vaultPath) => {
     // Get the last directory name from the path as the vault name
     const rawName = path.basename(vaultPath);
     const vaultName = sanitizeVaultName(rawName);
-    
+
     // Log the vault name mapping for user reference
     console.error(`Vault "${rawName}" registered as "${vaultName}"`);
-    
+
     return {
       name: vaultName,
-      path: vaultPath
+      path: vaultPath,
     };
   });
 
@@ -402,10 +455,10 @@ Examples:
   const uniqueVaults: VaultConfig[] = [];
   const usedNames = new Set<string>();
 
-  vaults.forEach(vault => {
+  vaults.forEach((vault) => {
     let uniqueName = vault.name;
     let counter = 1;
-    
+
     // If name is already used, find a unique variant
     if (usedNames.has(uniqueName)) {
       console.error(`Note: Found duplicate vault name "${uniqueName}"`);
@@ -415,17 +468,17 @@ Examples:
       }
       console.error(`  → Using "${uniqueName}" instead`);
     }
-    
+
     usedNames.add(uniqueName);
     uniqueVaults.push({
       name: uniqueName,
-      path: vault.path
+      path: vault.path,
     });
   });
 
   // Log final vault configuration to stderr
   console.error("\nSuccessfully configured vaults:");
-  uniqueVaults.forEach(vault => {
+  uniqueVaults.forEach((vault) => {
     console.error(`- ${vault.name}`);
     console.error(`  Path: ${vault.path}`);
   });
@@ -436,18 +489,22 @@ Examples:
     if (uniqueVaults.length === 0) {
       throw new McpError(
         ErrorCode.InvalidRequest,
-        'No valid Obsidian vaults provided. Please provide at least one valid vault path.\n\n' +
-        'Example usage:\n' +
-        '  obsidian-mcp ~/Documents/Obsidian/MyVault\n\n' +
-        'The vault directory must:\n' +
-        '- Exist and be accessible\n' +
-        '- Contain a .obsidian directory (initialize by opening in Obsidian first)\n' +
-        '- Have read/write permissions'
+        "No valid Obsidian vaults provided. Please provide at least one valid vault path.\n\n" +
+          "Example usage:\n" +
+          "  obsidian-mcp ~/Documents/Obsidian/MyVault\n\n" +
+          "The vault directory must:\n" +
+          "- Exist and be accessible\n" +
+          "- Contain a .obsidian directory (initialize by opening in Obsidian first)\n" +
+          "- Have read/write permissions"
       );
     }
 
-    console.error(`Starting Obsidian MCP Server with ${uniqueVaults.length} vault${uniqueVaults.length > 1 ? 's' : ''}...`);
-    
+    console.error(
+      `Starting Obsidian MCP Server with ${uniqueVaults.length} vault${
+        uniqueVaults.length > 1 ? "s" : ""
+      }...`
+    );
+
     const server = new ObsidianServer(uniqueVaults);
     console.error("Server initialized successfully");
 
@@ -469,11 +526,11 @@ Examples:
     }
 
     // Register signal handlers
-    process.on('SIGINT', () => shutdown('SIGINT')); // Ctrl+C
-    process.on('SIGTERM', () => shutdown('SIGTERM')); // Kill command
+    process.on("SIGINT", () => shutdown("SIGINT")); // Ctrl+C
+    process.on("SIGTERM", () => shutdown("SIGTERM")); // Kill command
 
     // Create vaults Map from unique vaults
-    const vaultsMap = new Map(uniqueVaults.map(v => [v.name, v.path]));
+    const vaultsMap = new Map(uniqueVaults.map((v) => [v.name, v.path]));
 
     // Register tools with unique vault names
     const tools = [
@@ -487,7 +544,9 @@ Examples:
       createAddTagsTool(vaultsMap),
       createRemoveTagsTool(vaultsMap),
       createRenameTagTool(vaultsMap),
-      createReadNoteTool(vaultsMap)
+      createReadNoteTool(vaultsMap),
+      createListAllTagsTool(vaultsMap),
+      createSearchByTagsTool(vaultsMap),
     ];
 
     for (const tool of tools) {
@@ -508,29 +567,34 @@ Examples:
   } catch (error) {
     console.log(error instanceof Error ? error.message : String(error));
     // Format error for MCP protocol
-    const mcpError = error instanceof McpError ? error : new McpError(
-      ErrorCode.InternalError,
-      error instanceof Error ? error.message : String(error)
-    );
+    const mcpError =
+      error instanceof McpError
+        ? error
+        : new McpError(
+            ErrorCode.InternalError,
+            error instanceof Error ? error.message : String(error)
+          );
 
     // Write error in MCP protocol format to stdout
-    process.stdout.write(JSON.stringify({
-      jsonrpc: "2.0",
-      error: {
-        code: mcpError.code,
-        message: mcpError.message
-      },
-      id: null
-    }));
+    process.stdout.write(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        error: {
+          code: mcpError.code,
+          message: mcpError.message,
+        },
+        id: null,
+      })
+    );
 
     // Log details to stderr for debugging
     console.error("\nFatal error starting server:");
     console.error(mcpError.message);
     if (error instanceof Error && error.stack) {
       console.error("\nStack trace:");
-      console.error(error.stack.split('\n').slice(1).join('\n'));
+      console.error(error.stack.split("\n").slice(1).join("\n"));
     }
-    
+
     process.exit(1);
   }
 }
