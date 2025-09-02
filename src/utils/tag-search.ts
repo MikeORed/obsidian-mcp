@@ -87,45 +87,46 @@ export function extractTagsWithMetadata(
     });
   }
 
-  // Extract content tags
-  const lines = parsed.content.split("\n");
-  let inCodeBlock = false;
-  let inHtmlComment = false;
+  // REMOVING THIS SECTION FOR NOW, Content hash detection cannot be easily trusted to represent tags
+  // // Extract content tags
+  // const lines = parsed.content.split("\n");
+  // let inCodeBlock = false;
+  // let inHtmlComment = false;
 
-  lines.forEach((line, index) => {
-    // Skip code blocks and HTML comments
-    if (line.trim().startsWith("```")) {
-      inCodeBlock = !inCodeBlock;
-      return;
-    }
-    if (line.includes("<!--")) inHtmlComment = true;
-    if (line.includes("-->")) inHtmlComment = false;
-    if (inCodeBlock || inHtmlComment) return;
+  // lines.forEach((line, index) => {
+  //   // Skip code blocks and HTML comments
+  //   if (line.trim().startsWith("```")) {
+  //     inCodeBlock = !inCodeBlock;
+  //     return;
+  //   }
+  //   if (line.includes("<!--")) inHtmlComment = true;
+  //   if (line.includes("-->")) inHtmlComment = false;
+  //   if (inCodeBlock || inHtmlComment) return;
 
-    // Match hashtags
-    const tagMatches = line.match(/(?<!`)#[a-zA-Z0-9][a-zA-Z0-9/]*(?!`)/g);
-    if (tagMatches) {
-      tagMatches.forEach((match) => {
-        const tag = match.slice(1); // Remove # prefix
+  //   // Match hashtags
+  //   const tagMatches = line.match(/(?<!`)#[a-zA-Z0-9][a-zA-Z0-9/]*(?!`)/g);
+  //   if (tagMatches) {
+  //     tagMatches.forEach((match) => {
+  //       const tag = match.slice(1); // Remove # prefix
 
-        let context = "";
-        if (includeContext) {
-          // Get surrounding lines for context
-          const startLine = Math.max(0, index - contextLines);
-          const endLine = Math.min(lines.length - 1, index + contextLines);
-          context = lines.slice(startLine, endLine + 1).join("\n");
-        }
+  //       let context = "";
+  //       if (includeContext) {
+  //         // Get surrounding lines for context
+  //         const startLine = Math.max(0, index - contextLines);
+  //         const endLine = Math.min(lines.length - 1, index + contextLines);
+  //         context = lines.slice(startLine, endLine + 1).join("\n");
+  //       }
 
-        tagOccurrences.push({
-          tag,
-          normalized: normalize ? normalizeTag(tag) : tag,
-          location: "content",
-          line: index + 1,
-          context: includeContext ? context : undefined,
-        });
-      });
-    }
-  });
+  //       tagOccurrences.push({
+  //         tag,
+  //         normalized: normalize ? normalizeTag(tag) : tag,
+  //         location: "content",
+  //         line: index + 1,
+  //         context: includeContext ? context : undefined,
+  //       });
+  //     });
+  //   }
+  // });
 
   return tagOccurrences;
 }
